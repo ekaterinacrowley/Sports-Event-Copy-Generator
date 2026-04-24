@@ -17,6 +17,7 @@ function figmaAssetResolver() {
 }
 
 export default defineConfig({
+  envPrefix: ['VITE_', 'CLIENT_', 'REF'],
   plugins: [
     figmaAssetResolver(),
     // The React and Tailwind plugins are both required for Make, even if
@@ -28,6 +29,20 @@ export default defineConfig({
     alias: {
       // Alias @ to the src directory
       '@': path.resolve(__dirname, './src'),
+    },
+  },
+  server: {
+    proxy: {
+      '/api/token': {
+        target: 'https://cpservm.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/token$/, '/gateway/token'),
+      },
+      '/api/marketing': {
+        target: 'https://cpservm.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/marketing/, '/gateway/marketing'),
+      },
     },
   },
 

@@ -1,11 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Copy, Check, Calendar, Filter } from 'lucide-react';
 import { toast, Toaster } from 'sonner';
+import { loadAvailableCountries, loadAvailableSports, loadPrematchEvents, type CountryOption, type SportOption } from './api/marketingApi';
 
 interface SportsEvent {
   id: string;
   team1: string;
   team2: string;
+  team1En?: string;
+  team2En?: string;
   league: string;
   date: string;
   time: string;
@@ -162,10 +165,44 @@ const MOCK_EVENTS: SportsEvent[] = [
     popularity: 'medium',
     eventDate: new Date('2026-04-23'),
     commDate: new Date('2026-04-20')
+  },
+  {
+    id: '12',
+    team1: 'Fenerbahce',
+    team2: 'Besiktas',
+    league: 'Süper Lig',
+    date: '2026-04-28',
+    time: '20:00',
+    sport: 'Футбол',
+    country: 'Турция',
+    popularity: 'top',
+    eventDate: new Date('2026-04-28'),
+    commDate: new Date('2026-04-25')
+  },
+  {
+    id: '13',
+    team1: 'Naft Tehran',
+    team2: 'Persepolis',
+    league: 'Persian Gulf Pro League',
+    date: '2026-05-01',
+    time: '19:30',
+    sport: 'Футбол',
+    country: 'Иран',
+    popularity: 'top',
+    eventDate: new Date('2026-05-01'),
+    commDate: new Date('2026-04-28')
   }
 ];
 
-function generateMessage(event: SportsEvent, template: Template, channel: 'push' | 'sms' | 'email' | 'personal' | 'call_script' | 'smm_post' | 'website_article', language: Language = 'ru') {
+function generateMessage(sourceEvent: SportsEvent, template: Template, channel: 'push' | 'sms' | 'email' | 'personal' | 'call_script' | 'smm_post' | 'website_article', language: Language = 'ru') {
+  const event = language === 'ru'
+    ? sourceEvent
+    : {
+        ...sourceEvent,
+        team1: sourceEvent.team1En || sourceEvent.team1,
+        team2: sourceEvent.team2En || sourceEvent.team2,
+      };
+
   const translations = {
     ru: {
       aggressive: {
@@ -489,15 +526,22 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
   return (
     <button
       onClick={handleCopy}
-      className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+      className="flex items-center gap-1 md:gap-2 px-3 md:px-4 py-1.5 md:py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-xs md:text-sm whitespace-nowrap"
     >
-      {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-      {label || 'Copy'}
+      {copied ? <Check className="w-3 h-3 md:w-4 md:h-4" /> : <Copy className="w-3 h-3 md:w-4 md:h-4" />}
+      <span className="hidden sm:inline">{label || 'Copy'}</span>
     </button>
   );
 }
 
 export default function App() {
+  const [events, setEvents] = useState<SportsEvent[]>(MOCK_EVENTS);
+  const [countriesCatalog, setCountriesCatalog] = useState<CountryOption[]>([]);
+  const [countriesWithEvents, setCountriesWithEvents] = useState<string[]>([]);
+  const [sportsWithEvents, setSportsWithEvents] = useState<string[]>([]);
+  const [sportsCatalog, setSportsCatalog] = useState<SportOption[]>([]);
+  const [isLoadingEvents, setIsLoadingEvents] = useState(true);
+  const [eventsError, setEventsError] = useState<string | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<SportsEvent | null>(null);
   const [selectedTemplate, setSelectedTemplate] = useState<Template>('aggressive');
   const [selectedLanguage, setSelectedLanguage] = useState<Language>('ru');
@@ -506,40 +550,311 @@ export default function App() {
   const [dateFilter, setDateFilter] = useState<string>('all');
   const [eventDateFilter, setEventDateFilter] = useState<string>('');
   const [commDateFilter, setCommDateFilter] = useState<string>('');
+  const [showFilters, setShowFilters] = useState(false);
 
-  const filteredEvents = MOCK_EVENTS.filter(event => {
-    if (sportFilter !== 'all' && event.sport !== sportFilter) return false;
+  useEffect(() => {
+    let isCancelled = false;
+
+    const loadDirectories = async () => {
+      try {
+        const [countries, sports] = await Promise.all([
+          loadAvailableCountries('ru'),
+          loadAvailableSports()
+        ]);
+        if (!isCancelled) {
+          setCountriesCatalog(countries);
+          setSportsCatalog(sports);
+        }
+      } catch (error) {
+        if (!isCancelled) {
+          console.error('Directories load error:', error);
+        }
+      }
+    };
+
+    loadDirectories();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    const loadEvents = async () => {
+      try {
+        setIsLoadingEvents(true);
+        setEventsError(null);
+
+        const selectedCountry = countriesCatalog.find((country) => country.name === countryFilter);
+        const selectedSport = sportsCatalog.find((sport) => sport.name === sportFilter);
+        const apiEvents = await loadPrematchEvents('ru', {
+          sportId: selectedSport?.id,
+          tournamentCountryId: selectedCountry?.id,
+          tournamentCountryName: selectedCountry?.name,
+          count: selectedSport || selectedCountry ? 200 : 100
+        });
+        if (!isCancelled && apiEvents.length > 0) {
+          setEvents(apiEvents);
+          return;
+        }
+
+        if (!isCancelled && apiEvents.length === 0) {
+          setEventsError('API вернуло пустой список. Используются моковые данные.');
+        }
+      } catch (error) {
+        if (!isCancelled) {
+          const message = error instanceof Error ? error.message : 'Неизвестная ошибка';
+          setEventsError(`Не удалось загрузить данные из API: ${message}. Используются моковые данные.`);
+          toast.error('Ошибка загрузки API. Используются моковые события.');
+        }
+      } finally {
+        if (!isCancelled) {
+          setIsLoadingEvents(false);
+        }
+      }
+    };
+
+    loadEvents();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [countryFilter, sportFilter, countriesCatalog, sportsCatalog]);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    const loadCountriesWithEvents = async () => {
+      try {
+        const selectedSport = sportsCatalog.find((sport) => sport.name === sportFilter);
+        const apiEvents = await loadPrematchEvents('ru', {
+          sportId: selectedSport?.id,
+          count: 5000
+        });
+
+        if (!isCancelled) {
+          const nextCountries = Array.from(new Set(apiEvents.map((event) => event.country)))
+            .sort((left, right) => left.localeCompare(right, 'ru'));
+          setCountriesWithEvents(nextCountries);
+        }
+      } catch (error) {
+        if (!isCancelled) {
+          console.error('Countries with events load error:', error);
+          setCountriesWithEvents([]);
+        }
+      }
+    };
+
+    loadCountriesWithEvents();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [sportFilter, sportsCatalog]);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    const loadSportsWithEvents = async () => {
+      if (countryFilter === 'all') {
+        setSportsWithEvents([]);
+        return;
+      }
+      try {
+        const selectedCountry = countriesCatalog.find((c) => c.name === countryFilter);
+        const apiEvents = await loadPrematchEvents('ru', {
+          tournamentCountryId: selectedCountry?.id,
+          tournamentCountryName: selectedCountry?.name,
+          count: 200
+        });
+        if (!isCancelled) {
+          const nextSports = Array.from(new Set(apiEvents.map((e) => e.sport)))
+            .sort((a, b) => a.localeCompare(b, 'ru'));
+          setSportsWithEvents(nextSports);
+        }
+      } catch (error) {
+        if (!isCancelled) {
+          console.error('Sports with events load error:', error);
+          setSportsWithEvents([]);
+        }
+      }
+    };
+
+    loadSportsWithEvents();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [countryFilter, countriesCatalog]);
+
+  useEffect(() => {
+    if (!selectedEvent) {
+      return;
+    }
+
+    const stillExists = events.some((event) => event.id === selectedEvent.id);
+    if (!stillExists) {
+      setSelectedEvent(null);
+    }
+  }, [events, selectedEvent]);
+
+  const availableCountries = useMemo(() => {
+    if (countriesWithEvents.length > 0) {
+      return countriesWithEvents;
+    }
+
+    return Array.from(new Set(events.map((event) => event.country))).sort((a, b) => a.localeCompare(b, 'ru'));
+  }, [countriesWithEvents, events]);
+
+  useEffect(() => {
+    if (countryFilter !== 'all' && !availableCountries.includes(countryFilter)) {
+      setCountryFilter('all');
+    }
+  }, [availableCountries, countryFilter]);
+
+  const availableSports = useMemo(() => {
+    if (sportsWithEvents.length > 0) {
+      return sportsWithEvents;
+    }
+    if (sportsCatalog.length > 0) {
+      return sportsCatalog.map((sport) => sport.name);
+    }
+    return Array.from(new Set(events.map((event) => event.sport))).sort((a, b) => a.localeCompare(b, 'ru'));
+  }, [sportsWithEvents, events, sportsCatalog]);
+
+  useEffect(() => {
+    if (sportFilter !== 'all' && availableSports.length > 0 && !availableSports.includes(sportFilter)) {
+      setSportFilter('all');
+    }
+  }, [availableSports, sportFilter]);
+
+  const filteredEvents = events.filter(event => {
     if (countryFilter !== 'all' && event.country !== countryFilter) return false;
-    if (dateFilter === 'today' && event.date !== '2026-04-21') return false;
-    if (dateFilter === 'tomorrow' && event.date !== '2026-04-22') return false;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const in7days = new Date(today);
+    in7days.setDate(in7days.getDate() + 7);
+
+    const in10days = new Date(today);
+    in10days.setDate(in10days.getDate() + 10);
+
+    if (dateFilter === 'today' && event.eventDate.toDateString() !== today.toDateString()) return false;
+    if (dateFilter === 'tomorrow' && event.eventDate.toDateString() !== tomorrow.toDateString()) return false;
+    if (dateFilter === 'in7days' && event.eventDate.toDateString() !== in7days.toDateString()) return false;
+    if (dateFilter === 'in10days' && event.eventDate.toDateString() !== in10days.toDateString()) return false;
+
     if (eventDateFilter && event.eventDate.toISOString().split('T')[0] !== eventDateFilter) return false;
     if (commDateFilter && event.commDate.toISOString().split('T')[0] !== commDateFilter) return false;
     return true;
   });
 
-  const handleCopyEventName = async (event: SportsEvent) => {
+  const handleCopyEventName = (event: SportsEvent) => {
+    const eventDateStr = event.eventDate ? event.eventDate.toLocaleDateString('ru-RU') : event.date;
+    const commDateStr = event.commDate ? event.commDate.toLocaleDateString('ru-RU') : 'N/A';
+
+    const fullInfo = `${event.team1} vs ${event.team2}
+${event.league}
+${event.country}
+${event.sport}
+${event.date} • ${event.time}
+📅 Событие: ${eventDateStr}
+📞 Коммуникация: ${commDateStr}`;
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(fullInfo)
+        .then(() => {
+          toast.success('Информация о событии скопирована!');
+        })
+        .catch((err) => {
+          console.error('Clipboard error:', err);
+          fallbackCopy(fullInfo);
+        });
+    } else {
+      fallbackCopy(fullInfo);
+    }
+  };
+
+  const fallbackCopy = (text: string) => {
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    textArea.style.position = 'fixed';
+    textArea.style.left = '-999999px';
+    document.body.appendChild(textArea);
+    textArea.select();
     try {
-      await navigator.clipboard.writeText(`${event.team1} vs ${event.team2}`);
-      toast.success('Название скопировано!');
+      document.execCommand('copy');
+      toast.success('Информация о событии скопирована!');
     } catch (err) {
+      console.error('Fallback copy error:', err);
       toast.error('Ошибка копирования');
     }
+    document.body.removeChild(textArea);
+  };
+
+  const generateGoogleSearchUrl = (event: SportsEvent) => {
+    const query = encodeURIComponent(`${event.team1} ${event.team2} ${event.league} ${event.date}`);
+    return `https://www.google.com/search?q=${query}`;
+  };
+
+  const generateGoogleImagesUrl = (event: SportsEvent) => {
+    const query = encodeURIComponent(`${event.team1} ${event.team2} ${event.league}`);
+    return `https://www.google.com/search?q=${query}&tbm=isch`;
+  };
+
+  const generateGoogleNewsUrl = (event: SportsEvent) => {
+    const query = encodeURIComponent(`${event.team1} ${event.team2} ${event.league}`);
+    return `https://www.google.com/search?q=${query}&tbm=nws`;
+  };
+
+  const generateYandexUrl = (event: SportsEvent) => {
+    const query = encodeURIComponent(`${event.team1} ${event.team2} ${event.league} ${event.date}`);
+    return `https://yandex.ru/search/?text=${query}`;
+  };
+
+  const generateBingUrl = (event: SportsEvent) => {
+    const query = encodeURIComponent(`${event.team1} ${event.team2} ${event.league} ${event.date}`);
+    return `https://www.bing.com/search?q=${query}`;
+  };
+
+  const generateYouTubeUrl = (event: SportsEvent) => {
+    const query = encodeURIComponent(`${event.team1} ${event.team2} ${event.league}`);
+    return `https://www.youtube.com/results?search_query=${query}`;
+  };
+
+  const generateGoogleTrendsUrl = (event: SportsEvent) => {
+    const query = encodeURIComponent(`${event.team1} ${event.team2}`);
+    return `https://trends.google.com/trends/explore?q=${query}`;
   };
 
   return (
     <>
       <Toaster position="top-right" theme="dark" />
-      <div className="size-full bg-zinc-900 text-white flex">
+      <div className="size-full bg-zinc-900 text-white flex flex-col md:flex-row">
       {/* Events List */}
-      <div className="w-[400px] border-r border-zinc-800 flex flex-col">
+      <div className="w-full md:w-[400px] md:border-r border-zinc-800 flex flex-col max-h-[50vh] md:max-h-none overflow-hidden">
         {/* Filters */}
-        <div className="p-4 border-b border-zinc-800">
-          <div className="flex items-center gap-2 mb-4">
-            <Filter className="w-5 h-5 text-zinc-400" />
-            <h2 className="font-semibold">Фильтры</h2>
+        <div className="border-b border-zinc-800">
+          <div className="p-4 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Filter className="w-5 h-5 text-zinc-400" />
+              <h2 className="font-semibold">Фильтры</h2>
+            </div>
+            <button
+              onClick={() => setShowFilters(!showFilters)}
+              className="md:hidden px-3 py-1 bg-zinc-800 hover:bg-zinc-700 rounded text-sm transition-colors"
+            >
+              {showFilters ? 'Скрыть' : 'Показать'}
+            </button>
           </div>
 
-          <div className="space-y-3">
+          <div className={`p-4 pt-0 space-y-3 ${showFilters ? 'block' : 'hidden'} md:block`}>
             <div>
               <label className="text-sm text-zinc-400 mb-1 block">Страна</label>
               <select
@@ -548,13 +863,9 @@ export default function App() {
                 className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
               >
                 <option value="all">Все страны</option>
-                <option value="Турция">Турция</option>
-                <option value="Азербайджан">Азербайджан</option>
-                <option value="Иран">Иран</option>
-                <option value="Оман">Оман</option>
-                <option value="Ливан">Ливан</option>
-                <option value="Палестина">Палестина</option>
-                <option value="Сирия">Сирия</option>
+                {availableCountries.map((country) => (
+                  <option key={country} value={country}>{country}</option>
+                ))}
               </select>
             </div>
 
@@ -566,9 +877,9 @@ export default function App() {
                 className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
               >
                 <option value="all">Все виды спорта</option>
-                <option value="Футбол">Футбол</option>
-                <option value="Баскетбол">Баскетбол</option>
-                <option value="Хоккей">Хоккей</option>
+                {availableSports.map((sport) => (
+                  <option key={sport} value={sport}>{sport}</option>
+                ))}
               </select>
             </div>
 
@@ -602,6 +913,8 @@ export default function App() {
                 <option value="all">Все даты</option>
                 <option value="today">Сегодня</option>
                 <option value="tomorrow">Завтра</option>
+                <option value="in7days">Через 7 дней</option>
+                <option value="in10days">Через 10 дней</option>
               </select>
             </div>
 
@@ -622,25 +935,39 @@ export default function App() {
 
         {/* Events */}
         <div className="flex-1 overflow-y-auto">
+          {isLoadingEvents && (
+            <div className="p-4 text-sm text-zinc-400">Загрузка событий из API...</div>
+          )}
+
+          {eventsError && (
+            <div className="m-4 p-3 rounded-lg text-xs bg-amber-500/10 border border-amber-500/30 text-amber-200">
+              {eventsError}
+            </div>
+          )}
+
+          {!isLoadingEvents && filteredEvents.length === 0 && (
+            <div className="p-4 text-sm text-zinc-400">События по выбранным фильтрам не найдены.</div>
+          )}
+
           {filteredEvents.map((event) => (
             <div
               key={event.id}
-              className={`p-4 border-b border-zinc-800 cursor-pointer transition-colors ${
+              className={`p-3 md:p-4 border-b border-zinc-800 cursor-pointer transition-colors ${
                 selectedEvent?.id === event.id ? 'bg-zinc-800' : 'hover:bg-zinc-800/50'
               }`}
             >
               <div className="flex items-start justify-between mb-2">
-                <div className="flex-1">
-                  <h3 className="font-medium mb-1">{event.team1} vs {event.team2}</h3>
-                  <div className="text-sm text-zinc-400 space-y-1">
-                    <div>{event.league}</div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-medium mb-1 text-sm md:text-base truncate">{event.team1} vs {event.team2}</h3>
+                  <div className="text-xs md:text-sm text-zinc-400 space-y-1">
+                    <div className="truncate">{event.league}</div>
                     <div className="flex items-center gap-1 flex-wrap">
                       <span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 text-xs rounded">{event.country}</span>
                       <span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 text-xs rounded">{event.sport}</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <Calendar className="w-3 h-3" />
-                      {event.date} • {event.time}
+                      <span className="text-xs">{event.date} • {event.time}</span>
                     </div>
                     <div className="text-xs space-y-0.5 pt-1 border-t border-zinc-700">
                       <div>📅 Событие: {event.eventDate.toLocaleDateString('ru-RU')}</div>
@@ -649,22 +976,24 @@ export default function App() {
                   </div>
                 </div>
                 {event.popularity === 'top' && (
-                  <span className="px-2 py-1 bg-orange-500/20 text-orange-400 text-xs rounded">TOP</span>
+                  <span className="px-2 py-1 bg-orange-500/20 text-orange-400 text-xs rounded whitespace-nowrap">TOP</span>
                 )}
               </div>
 
               <div className="flex gap-2">
                 <button
                   onClick={() => setSelectedEvent(event)}
-                  className="flex-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded transition-colors"
+                  className="flex-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs md:text-sm rounded transition-colors"
                 >
                   Выбрать
                 </button>
                 <button
                   onClick={() => handleCopyEventName(event)}
-                  className="px-3 py-1.5 bg-zinc-700 hover:bg-zinc-600 text-white text-sm rounded transition-colors"
+                  className="flex items-center gap-1 px-2 md:px-3 py-1.5 bg-zinc-700 hover:bg-zinc-600 text-white text-xs md:text-sm rounded transition-colors"
+                  title="Копировать всю информацию"
                 >
-                  <Copy className="w-4 h-4" />
+                  <Copy className="w-3 h-3 md:w-4 md:h-4" />
+                  <span className="hidden md:inline">Инфо</span>
                 </button>
               </div>
             </div>
@@ -677,17 +1006,17 @@ export default function App() {
         {selectedEvent ? (
           <>
             {/* Header */}
-            <div className="p-6 border-b border-zinc-800">
-              <h1 className="text-2xl font-semibold mb-2">
+            <div className="p-4 md:p-6 border-b border-zinc-800">
+              <h1 className="text-xl md:text-2xl font-semibold mb-2">
                 {selectedEvent.team1} vs {selectedEvent.team2}
               </h1>
-              <div className="text-zinc-400 space-y-2">
-                <div>{selectedEvent.league} • {selectedEvent.date} • {selectedEvent.time}</div>
-                <div className="flex items-center gap-2">
-                  <span className="px-2 py-1 bg-blue-500/20 text-blue-400 text-sm rounded">{selectedEvent.country}</span>
-                  <span className="px-2 py-1 bg-purple-500/20 text-purple-400 text-sm rounded">{selectedEvent.sport}</span>
+              <div className="text-zinc-400 space-y-2 text-sm md:text-base">
+                <div className="text-xs md:text-sm">{selectedEvent.league} • {selectedEvent.date} • {selectedEvent.time}</div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="px-2 py-1 bg-blue-500/20 text-blue-400 text-xs md:text-sm rounded">{selectedEvent.country}</span>
+                  <span className="px-2 py-1 bg-purple-500/20 text-purple-400 text-xs md:text-sm rounded">{selectedEvent.sport}</span>
                 </div>
-                <div className="flex items-center gap-4 text-sm pt-2 border-t border-zinc-700">
+                <div className="flex flex-col md:flex-row md:items-center gap-2 md:gap-4 text-xs md:text-sm pt-2 border-t border-zinc-700">
                   <div>📅 <span className="text-zinc-500">Событие:</span> {selectedEvent.eventDate.toLocaleDateString('ru-RU')}</div>
                   <div>📞 <span className="text-zinc-500">Коммуникация:</span> {selectedEvent.commDate.toLocaleDateString('ru-RU')}</div>
                 </div>
@@ -695,15 +1024,15 @@ export default function App() {
             </div>
 
             {/* Template & Language Selector */}
-            <div className="p-6 border-b border-zinc-800 space-y-4">
+            <div className="p-4 md:p-6 border-b border-zinc-800 space-y-4">
               <div>
                 <label className="text-sm text-zinc-400 mb-2 block">Шаблон</label>
-                <div className="flex gap-2">
+                <div className="grid grid-cols-2 md:flex gap-2">
                   {(['aggressive', 'neutral', 'vip', 'churn'] as Template[]).map((template) => (
                     <button
                       key={template}
                       onClick={() => setSelectedTemplate(template)}
-                      className={`px-4 py-2 rounded-lg text-sm transition-colors ${
+                      className={`px-3 md:px-4 py-2 rounded-lg text-xs md:text-sm transition-colors ${
                         selectedTemplate === template
                           ? 'bg-blue-600 text-white'
                           : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
@@ -720,7 +1049,7 @@ export default function App() {
 
               <div>
                 <label className="text-sm text-zinc-400 mb-2 block">Язык</label>
-                <div className="flex gap-2 flex-wrap">
+                <div className="grid grid-cols-3 md:flex gap-2 flex-wrap">
                   {([
                     { code: 'ru', name: 'Русский' },
                     { code: 'tr', name: 'Türkçe' },
@@ -732,7 +1061,7 @@ export default function App() {
                     <button
                       key={lang.code}
                       onClick={() => setSelectedLanguage(lang.code)}
-                      className={`px-4 py-2 rounded-lg text-sm transition-colors ${
+                      className={`px-3 md:px-4 py-2 rounded-lg text-xs md:text-sm transition-colors ${
                         selectedLanguage === lang.code
                           ? 'bg-green-600 text-white'
                           : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
@@ -746,99 +1075,246 @@ export default function App() {
             </div>
 
             {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+            <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4 md:space-y-6">
               {/* Push */}
-              <div className="bg-zinc-800 rounded-lg p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-medium">📱 Push</h3>
+              <div className="bg-zinc-800 rounded-lg p-3 md:p-4">
+                <div className="flex items-center justify-between mb-3 gap-2">
+                  <h3 className="font-medium text-sm md:text-base">📱 Push</h3>
                   <CopyButton text={generateMessage(selectedEvent, selectedTemplate, 'push', selectedLanguage) as string} />
                 </div>
-                <div className="text-sm text-zinc-300 whitespace-pre-line bg-zinc-900 rounded p-3">
+                <div className="text-xs md:text-sm text-zinc-300 whitespace-pre-line bg-zinc-900 rounded p-2 md:p-3">
                   {generateMessage(selectedEvent, selectedTemplate, 'push', selectedLanguage)}
                 </div>
               </div>
 
               {/* SMS */}
-              <div className="bg-zinc-800 rounded-lg p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-medium">💬 SMS</h3>
+              <div className="bg-zinc-800 rounded-lg p-3 md:p-4">
+                <div className="flex items-center justify-between mb-3 gap-2">
+                  <h3 className="font-medium text-sm md:text-base">💬 SMS</h3>
                   <CopyButton text={generateMessage(selectedEvent, selectedTemplate, 'sms', selectedLanguage) as string} />
                 </div>
-                <div className="text-sm text-zinc-300 whitespace-pre-line bg-zinc-900 rounded p-3">
+                <div className="text-xs md:text-sm text-zinc-300 whitespace-pre-line bg-zinc-900 rounded p-2 md:p-3">
                   {generateMessage(selectedEvent, selectedTemplate, 'sms', selectedLanguage)}
                 </div>
               </div>
 
               {/* Email */}
-              <div className="bg-zinc-800 rounded-lg p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-medium">📧 Email</h3>
+              <div className="bg-zinc-800 rounded-lg p-3 md:p-4">
+                <div className="flex items-center justify-between mb-3 gap-2">
+                  <h3 className="font-medium text-sm md:text-base">📧 Email</h3>
                   <CopyButton
                     text={`Subject: ${(generateMessage(selectedEvent, selectedTemplate, 'email', selectedLanguage) as any).subject}\n\n${(generateMessage(selectedEvent, selectedTemplate, 'email', selectedLanguage) as any).body}`}
                   />
                 </div>
-                <div className="text-sm text-zinc-300 space-y-3">
-                  <div className="bg-zinc-900 rounded p-3">
+                <div className="text-xs md:text-sm text-zinc-300 space-y-2 md:space-y-3">
+                  <div className="bg-zinc-900 rounded p-2 md:p-3">
                     <div className="text-zinc-500 text-xs mb-1">Тема:</div>
-                    <div>{(generateMessage(selectedEvent, selectedTemplate, 'email', selectedLanguage) as any).subject}</div>
+                    <div className="text-xs md:text-sm">{(generateMessage(selectedEvent, selectedTemplate, 'email', selectedLanguage) as any).subject}</div>
                   </div>
-                  <div className="bg-zinc-900 rounded p-3 whitespace-pre-line">
+                  <div className="bg-zinc-900 rounded p-2 md:p-3 whitespace-pre-line">
                     <div className="text-zinc-500 text-xs mb-1">Текст:</div>
-                    <div>{(generateMessage(selectedEvent, selectedTemplate, 'email', selectedLanguage) as any).body}</div>
+                    <div className="text-xs md:text-sm">{(generateMessage(selectedEvent, selectedTemplate, 'email', selectedLanguage) as any).body}</div>
                   </div>
                 </div>
               </div>
 
               {/* Personal Message */}
-              <div className="bg-zinc-800 rounded-lg p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-medium">🎯 Personal Message</h3>
+              <div className="bg-zinc-800 rounded-lg p-3 md:p-4">
+                <div className="flex items-center justify-between mb-3 gap-2">
+                  <h3 className="font-medium text-sm md:text-base">🎯 Personal Message</h3>
                   <CopyButton text={generateMessage(selectedEvent, selectedTemplate, 'personal', selectedLanguage) as string} />
                 </div>
-                <div className="text-sm text-zinc-300 whitespace-pre-line bg-zinc-900 rounded p-3">
+                <div className="text-xs md:text-sm text-zinc-300 whitespace-pre-line bg-zinc-900 rounded p-2 md:p-3">
                   {generateMessage(selectedEvent, selectedTemplate, 'personal', selectedLanguage)}
                 </div>
               </div>
 
               {/* Call Script */}
-              <div className="bg-zinc-800 rounded-lg p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-medium">📞 Скрипт для звонка</h3>
+              <div className="bg-zinc-800 rounded-lg p-3 md:p-4">
+                <div className="flex items-center justify-between mb-3 gap-2">
+                  <h3 className="font-medium text-sm md:text-base">📞 Скрипт для звонка</h3>
                   <CopyButton text={generateMessage(selectedEvent, selectedTemplate, 'call_script', selectedLanguage) as string} />
                 </div>
-                <div className="text-sm text-zinc-300 whitespace-pre-line bg-zinc-900 rounded p-3">
+                <div className="text-xs md:text-sm text-zinc-300 whitespace-pre-line bg-zinc-900 rounded p-2 md:p-3">
                   {generateMessage(selectedEvent, selectedTemplate, 'call_script', selectedLanguage)}
                 </div>
               </div>
 
               {/* SMM Post */}
-              <div className="bg-zinc-800 rounded-lg p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-medium">📱 Пост SMM</h3>
+              <div className="bg-zinc-800 rounded-lg p-3 md:p-4">
+                <div className="flex items-center justify-between mb-3 gap-2">
+                  <h3 className="font-medium text-sm md:text-base">📱 Пост SMM</h3>
                   <CopyButton text={generateMessage(selectedEvent, selectedTemplate, 'smm_post', selectedLanguage) as string} />
                 </div>
-                <div className="text-sm text-zinc-300 whitespace-pre-line bg-zinc-900 rounded p-3">
+                <div className="text-xs md:text-sm text-zinc-300 whitespace-pre-line bg-zinc-900 rounded p-2 md:p-3">
                   {generateMessage(selectedEvent, selectedTemplate, 'smm_post', selectedLanguage)}
                 </div>
               </div>
 
               {/* Website Article */}
-              <div className="bg-zinc-800 rounded-lg p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-medium">📝 Мини статья для сайта</h3>
+              <div className="bg-zinc-800 rounded-lg p-3 md:p-4">
+                <div className="flex items-center justify-between mb-3 gap-2">
+                  <h3 className="font-medium text-sm md:text-base">📝 Мини статья для сайта</h3>
                   <CopyButton text={generateMessage(selectedEvent, selectedTemplate, 'website_article', selectedLanguage) as string} />
                 </div>
-                <div className="text-sm text-zinc-300 whitespace-pre-line bg-zinc-900 rounded p-3">
+                <div className="text-xs md:text-sm text-zinc-300 whitespace-pre-line bg-zinc-900 rounded p-2 md:p-3">
                   {generateMessage(selectedEvent, selectedTemplate, 'website_article', selectedLanguage)}
+                </div>
+              </div>
+
+              {/* Google Search */}
+              <div className="bg-zinc-800 rounded-lg p-3 md:p-4">
+                <div className="flex items-center justify-between mb-3 gap-2">
+                  <h3 className="font-medium text-sm md:text-base">🔍 Выдача Google по запросу</h3>
+                  <div className="flex gap-2">
+                    <CopyButton text={generateGoogleSearchUrl(selectedEvent)} />
+                    <a
+                      href={generateGoogleSearchUrl(selectedEvent)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1 md:gap-2 px-3 md:px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors text-sm"
+                    >
+                      Открыть
+                    </a>
+                  </div>
+                </div>
+                <div className="text-xs md:text-sm text-zinc-300 bg-zinc-900 rounded p-2 md:p-3 break-all overflow-hidden">
+                  {generateGoogleSearchUrl(selectedEvent)}
+                </div>
+              </div>
+
+              {/* Google Images */}
+              <div className="bg-zinc-800 rounded-lg p-3 md:p-4">
+                <div className="flex items-center justify-between mb-3 gap-2">
+                  <h3 className="font-medium text-sm md:text-base">🖼️ Выдача картинок Google</h3>
+                  <div className="flex gap-2">
+                    <CopyButton text={generateGoogleImagesUrl(selectedEvent)} />
+                    <a
+                      href={generateGoogleImagesUrl(selectedEvent)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1 md:gap-2 px-3 md:px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors text-sm"
+                    >
+                      Открыть
+                    </a>
+                  </div>
+                </div>
+                <div className="text-xs md:text-sm text-zinc-300 bg-zinc-900 rounded p-2 md:p-3 break-all overflow-hidden">
+                  {generateGoogleImagesUrl(selectedEvent)}
+                </div>
+              </div>
+
+              {/* Google News */}
+              <div className="bg-zinc-800 rounded-lg p-3 md:p-4">
+                <div className="flex items-center justify-between mb-3 gap-2">
+                  <h3 className="font-medium text-sm md:text-base">📰 Выдача новостей Google</h3>
+                  <div className="flex gap-2">
+                    <CopyButton text={generateGoogleNewsUrl(selectedEvent)} />
+                    <a
+                      href={generateGoogleNewsUrl(selectedEvent)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1 md:gap-2 px-3 md:px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors text-sm"
+                    >
+                      Открыть
+                    </a>
+                  </div>
+                </div>
+                <div className="text-xs md:text-sm text-zinc-300 bg-zinc-900 rounded p-2 md:p-3 break-all overflow-hidden">
+                  {generateGoogleNewsUrl(selectedEvent)}
+                </div>
+              </div>
+
+              {/* Yandex */}
+              <div className="bg-zinc-800 rounded-lg p-3 md:p-4">
+                <div className="flex items-center justify-between mb-3 gap-2">
+                  <h3 className="font-medium text-sm md:text-base">🔴 Выдача Яндекс</h3>
+                  <div className="flex gap-2">
+                    <CopyButton text={generateYandexUrl(selectedEvent)} />
+                    <a
+                      href={generateYandexUrl(selectedEvent)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1 md:gap-2 px-3 md:px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors text-sm"
+                    >
+                      Открыть
+                    </a>
+                  </div>
+                </div>
+                <div className="text-xs md:text-sm text-zinc-300 bg-zinc-900 rounded p-2 md:p-3 break-all overflow-hidden">
+                  {generateYandexUrl(selectedEvent)}
+                </div>
+              </div>
+
+              {/* Bing */}
+              <div className="bg-zinc-800 rounded-lg p-3 md:p-4">
+                <div className="flex items-center justify-between mb-3 gap-2">
+                  <h3 className="font-medium text-sm md:text-base">🔵 Выдача Bing</h3>
+                  <div className="flex gap-2">
+                    <CopyButton text={generateBingUrl(selectedEvent)} />
+                    <a
+                      href={generateBingUrl(selectedEvent)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1 md:gap-2 px-3 md:px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors text-sm"
+                    >
+                      Открыть
+                    </a>
+                  </div>
+                </div>
+                <div className="text-xs md:text-sm text-zinc-300 bg-zinc-900 rounded p-2 md:p-3 break-all overflow-hidden">
+                  {generateBingUrl(selectedEvent)}
+                </div>
+              </div>
+
+              {/* YouTube */}
+              <div className="bg-zinc-800 rounded-lg p-3 md:p-4">
+                <div className="flex items-center justify-between mb-3 gap-2">
+                  <h3 className="font-medium text-sm md:text-base">▶️ Выдача YouTube</h3>
+                  <div className="flex gap-2">
+                    <CopyButton text={generateYouTubeUrl(selectedEvent)} />
+                    <a
+                      href={generateYouTubeUrl(selectedEvent)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1 md:gap-2 px-3 md:px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors text-sm"
+                    >
+                      Открыть
+                    </a>
+                  </div>
+                </div>
+                <div className="text-xs md:text-sm text-zinc-300 bg-zinc-900 rounded p-2 md:p-3 break-all overflow-hidden">
+                  {generateYouTubeUrl(selectedEvent)}
+                </div>
+              </div>
+
+              {/* Google Trends */}
+              <div className="bg-zinc-800 rounded-lg p-3 md:p-4">
+                <div className="flex items-center justify-between mb-3 gap-2">
+                  <h3 className="font-medium text-sm md:text-base">📈 Google Trends</h3>
+                  <div className="flex gap-2">
+                    <CopyButton text={generateGoogleTrendsUrl(selectedEvent)} />
+                    <a
+                      href={generateGoogleTrendsUrl(selectedEvent)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1 md:gap-2 px-3 md:px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors text-sm"
+                    >
+                      Открыть
+                    </a>
+                  </div>
+                </div>
+                <div className="text-xs md:text-sm text-zinc-300 bg-zinc-900 rounded p-2 md:p-3 break-all overflow-hidden">
+                  {generateGoogleTrendsUrl(selectedEvent)}
                 </div>
               </div>
             </div>
           </>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-zinc-500">
+          <div className="flex-1 flex items-center justify-center text-zinc-500 p-4">
             <div className="text-center">
-              <Calendar className="w-16 h-16 mx-auto mb-4 text-zinc-700" />
-              <p>Выберите событие из списка</p>
+              <Calendar className="w-12 h-12 md:w-16 md:h-16 mx-auto mb-4 text-zinc-700" />
+              <p className="text-sm md:text-base">Выберите событие из списка</p>
             </div>
           </div>
         )}
