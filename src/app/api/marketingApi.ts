@@ -49,8 +49,8 @@ interface LocalizedCountryDto {
   localized?: Record<string, string | undefined>;
 }
 
-interface CachedAccessToken {
-  value: string;
+interface CachedValue<T> {
+  value: T;
   expiresAt: number;
 }
 
@@ -60,10 +60,40 @@ const SPORTS_DIRECTORY_ENDPOINT = '/api/marketing/datafeed/directories/api/v2/sp
 const COUNTRIES_DIRECTORY_ENDPOINT = '/api/marketing/datafeed/directories/api/v1/countries';
 const COUNTRIES_DIRECTORY_V3_ENDPOINT = '/api/marketing/datafeed/directories/api/v3/countries';
 
-const DEFAULT_TOKEN_TTL_MS = 50 * 60 * 1000;
+const RETRYABLE_STATUS = new Set([429, 502, 503, 504]);
+const DIRECTORY_CACHE_TTL_MS = 5 * 60 * 1000;
 
-let cachedAccessToken: CachedAccessToken | null = null;
-let pendingAccessTokenRequest: Promise<string> | null = null;
+let accessTokenCache: CachedValue<string> | null = null;
+let accessTokenRequest: Promise<string> | null = null;
+let sportsDictionaryCache: CachedValue<Map<number, string>> | null = null;
+let sportsDictionaryRequest: Promise<Map<number, string>> | null = null;
+const countriesCacheByLanguage = new Map<string, CachedValue<CountryOption[]>>();
+const countriesRequestByLanguage = new Map<string, Promise<CountryOption[]>>();
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function fetchWithRetry(input: string, init?: RequestInit, retries = 2): Promise<Response> {
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      const response = await fetch(input, init);
+      if (!RETRYABLE_STATUS.has(response.status) || attempt === retries) {
+        return response;
+      }
+    } catch (error) {
+      if (attempt === retries) {
+        throw error;
+      }
+    }
+
+    await delay((attempt + 1) * 300);
+  }
+
+  throw new Error('Unexpected retry state');
+}
 
 function requireEnv(name: string, value: string | undefined): string {
   if (!value) {
@@ -161,7 +191,7 @@ function createCountryResolver(countries: CountryOption[]): CountryResolver {
       return 'Международные';
     }
 
-    const championshipMatch = trimmed.match(/^Чемпионат\s+([^.]+?)(?:\.|$)/i);
+    const championshipMatch = trimmed.match(/^Чемпионат\s+([^.]+)\./i);
     if (championshipMatch?.[1]) {
       const matchedCountry = resolveKnownCountryName(normalizeGenitiveCountry(championshipMatch[1]), exactNames);
       if (matchedCountry) {
@@ -195,7 +225,7 @@ function extractCountryFromTournamentName(name: string): string {
     return 'Международные';
   }
 
-  const championshipMatch = trimmed.match(/^Чемпионат\s+([^.]+?)(?:\.|$)/i);
+  const championshipMatch = trimmed.match(/^Чемпионат\s+([^.]+)\./i);
   if (championshipMatch?.[1]) {
     return resolveKnownCountryName(normalizeGenitiveCountry(championshipMatch[1])) || 'Международные';
   }
@@ -244,12 +274,12 @@ function toTimeString(date: Date): string {
 
 async function getAccessToken(clientId: string, clientSecret: string): Promise<string> {
   const now = Date.now();
-  if (cachedAccessToken && cachedAccessToken.expiresAt > now) {
-    return cachedAccessToken.value;
+  if (accessTokenCache && accessTokenCache.expiresAt > now) {
+    return accessTokenCache.value;
   }
 
-  if (pendingAccessTokenRequest) {
-    return pendingAccessTokenRequest;
+  if (accessTokenRequest) {
+    return accessTokenRequest;
   }
 
   const body = new URLSearchParams({
@@ -258,8 +288,8 @@ async function getAccessToken(clientId: string, clientSecret: string): Promise<s
     client_secret: clientSecret
   });
 
-  pendingAccessTokenRequest = (async () => {
-    const response = await fetch(TOKEN_ENDPOINT, {
+  accessTokenRequest = (async () => {
+    const response = await fetchWithRetry(TOKEN_ENDPOINT, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded'
@@ -276,8 +306,8 @@ async function getAccessToken(clientId: string, clientSecret: string): Promise<s
       throw new Error('OAuth response does not contain access_token');
     }
 
-    const ttlMs = Math.max((data.expires_in ?? 3000) * 1000 - 60_000, 60_000);
-    cachedAccessToken = {
+    const ttlMs = Math.max(((data.expires_in ?? 3600) - 60) * 1000, 60_000);
+    accessTokenCache = {
       value: data.access_token,
       expiresAt: Date.now() + ttlMs
     };
@@ -286,36 +316,58 @@ async function getAccessToken(clientId: string, clientSecret: string): Promise<s
   })();
 
   try {
-    return await pendingAccessTokenRequest;
+    return await accessTokenRequest;
   } finally {
-    pendingAccessTokenRequest = null;
+    accessTokenRequest = null;
   }
 }
 
 async function loadSportsDictionary(ref: string, token: string): Promise<Map<number, string>> {
+  const now = Date.now();
+  if (sportsDictionaryCache && sportsDictionaryCache.expiresAt > now) {
+    return sportsDictionaryCache.value;
+  }
+
+  if (sportsDictionaryRequest) {
+    return sportsDictionaryRequest;
+  }
+
   const url = new URL(SPORTS_DIRECTORY_ENDPOINT, window.location.origin);
   url.searchParams.set('ref', ref);
 
-  const response = await fetch(url.toString(), {
-    headers: {
-      Authorization: `Bearer ${token}`
+  sportsDictionaryRequest = (async () => {
+    const response = await fetchWithRetry(url.toString(), {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    });
+
+    if (!response.ok) {
+      return new Map<number, string>();
     }
-  });
 
-  if (!response.ok) {
-    return new Map<number, string>();
-  }
+    const payload = (await response.json()) as ListResponse<{ id?: number; name?: string | null }>;
+    const map = new Map<number, string>();
 
-  const payload = (await response.json()) as ListResponse<{ id?: number; name?: string | null }>;
-  const map = new Map<number, string>();
-
-  for (const item of payload.items || []) {
-    if (typeof item.id === 'number' && item.name) {
-      map.set(item.id, item.name);
+    for (const item of payload.items || []) {
+      if (typeof item.id === 'number' && item.name) {
+        map.set(item.id, item.name);
+      }
     }
-  }
 
-  return map;
+    sportsDictionaryCache = {
+      value: map,
+      expiresAt: Date.now() + DIRECTORY_CACHE_TTL_MS
+    };
+
+    return map;
+  })();
+
+  try {
+    return await sportsDictionaryRequest;
+  } finally {
+    sportsDictionaryRequest = null;
+  }
 }
 
 async function loadSportsOptions(ref: string, token: string): Promise<SportOption[]> {
@@ -327,19 +379,43 @@ async function loadSportsOptions(ref: string, token: string): Promise<SportOptio
 }
 
 async function loadCountryOptions(token: string, language = 'ru'): Promise<CountryOption[]> {
-  const v1Countries = await loadCountryOptionsV1(token, language);
-  if (v1Countries.length > 0) {
-    return v1Countries;
+  const now = Date.now();
+  const cached = countriesCacheByLanguage.get(language);
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
   }
 
-  return loadCountryOptionsV3(token, language);
+  const inFlight = countriesRequestByLanguage.get(language);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const request = (async () => {
+  const v1Countries = await loadCountryOptionsV1(token, language);
+    const countries = v1Countries.length > 0 ? v1Countries : await loadCountryOptionsV3(token, language);
+
+    countriesCacheByLanguage.set(language, {
+      value: countries,
+      expiresAt: Date.now() + DIRECTORY_CACHE_TTL_MS
+    });
+
+    return countries;
+  })();
+
+  countriesRequestByLanguage.set(language, request);
+
+  try {
+    return await request;
+  } finally {
+    countriesRequestByLanguage.delete(language);
+  }
 }
 
 async function loadCountryOptionsV1(token: string, language: string): Promise<CountryOption[]> {
   const url = new URL(COUNTRIES_DIRECTORY_ENDPOINT, window.location.origin);
   url.searchParams.set('lng', language);
 
-  const response = await fetch(url.toString(), {
+  const response = await fetchWithRetry(url.toString(), {
     headers: {
       Authorization: `Bearer ${token}`
     }
@@ -362,7 +438,7 @@ async function loadCountryOptionsV3(token: string, language: string): Promise<Co
   const url = new URL(COUNTRIES_DIRECTORY_V3_ENDPOINT, window.location.origin);
   url.searchParams.set('languages', language);
 
-  const response = await fetch(url.toString(), {
+  const response = await fetchWithRetry(url.toString(), {
     headers: {
       Authorization: `Bearer ${token}`
     }
@@ -393,29 +469,49 @@ async function loadApiSportsEvents(
     count?: number;
   }
 ): Promise<ApiSportsEvent[]> {
-  const url = new URL(EVENTS_ENDPOINT, window.location.origin);
-  url.searchParams.set('ref', ref);
-  url.searchParams.set('lng', language);
-  url.searchParams.set('count', String(options?.count ?? 100));
-  if (options?.sportId) {
-    url.searchParams.set('sportIds', String(options.sportId));
+  const requestedCount = options?.count ?? 100;
+  const fallbackCounts = [requestedCount];
+
+  if (requestedCount > 100) {
+    fallbackCounts.push(100);
   }
-  if (options?.tournamentCountryId) {
-    url.searchParams.set('tournamentCountryIds', String(options.tournamentCountryId));
+  if (requestedCount > 50) {
+    fallbackCounts.push(50);
   }
 
-  const response = await fetch(url.toString(), {
-    headers: {
-      Authorization: `Bearer ${token}`
+  const uniqueCounts = Array.from(new Set(fallbackCounts));
+  let lastStatus: number | null = null;
+
+  for (const count of uniqueCounts) {
+    const url = new URL(EVENTS_ENDPOINT, window.location.origin);
+    url.searchParams.set('ref', ref);
+    url.searchParams.set('lng', language);
+    url.searchParams.set('count', String(count));
+    if (options?.sportId) {
+      url.searchParams.set('sportIds', String(options.sportId));
     }
-  });
+    if (options?.tournamentCountryId) {
+      url.searchParams.set('tournamentCountryIds', String(options.tournamentCountryId));
+    }
 
-  if (!response.ok) {
-    throw new Error(`Events request failed with status ${response.status}`);
+    const response = await fetchWithRetry(url.toString(), {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    });
+
+    if (response.ok) {
+      const payload = (await response.json()) as ListResponse<ApiSportsEvent>;
+      return payload.items || [];
+    }
+
+    lastStatus = response.status;
+    if (!RETRYABLE_STATUS.has(response.status)) {
+      break;
+    }
   }
 
-  const payload = (await response.json()) as ListResponse<ApiSportsEvent>;
-  return payload.items || [];
+  throw new Error(`Events request failed with status ${lastStatus ?? 'unknown'}`);
 }
 
 function mapApiEventToUiEvent(
@@ -497,14 +593,20 @@ export async function loadPrematchEvents(
     tournamentCountryId?: number;
     tournamentCountryName?: string;
     count?: number;
+    includeEnglishNames?: boolean;
   }
 ): Promise<SportsEvent[]> {
   const { ref, accessToken } = await getApiConfig();
+  const includeEnglishNames = options?.includeEnglishNames ?? true;
+  const englishItemsPromise = includeEnglishNames
+    ? loadApiSportsEvents(ref, accessToken, 'en', options).catch(() => [] as ApiSportsEvent[])
+    : Promise.resolve([] as ApiSportsEvent[]);
+
   const [sportNameById, countries, localizedItems, englishItems] = await Promise.all([
     loadSportsDictionary(ref, accessToken),
     loadCountryOptions(accessToken, language),
     loadApiSportsEvents(ref, accessToken, language, options),
-    loadApiSportsEvents(ref, accessToken, 'en', options)
+    englishItemsPromise
   ]);
   const resolveCountry = createCountryResolver(countries);
   const englishNamesById = new Map<number, { team1?: string; team2?: string }>();

@@ -19,181 +19,90 @@ interface SportsEvent {
   commDate: Date;
 }
 
+interface CachedSportsEvent extends Omit<SportsEvent, 'eventDate' | 'commDate'> {
+  eventDate: string;
+  commDate: string;
+}
+
 type Template = 'aggressive' | 'neutral' | 'vip' | 'churn';
 type Language = 'ru' | 'tr' | 'ar' | 'fa' | 'fr' | 'az';
 
-const MOCK_EVENTS: SportsEvent[] = [
-  {
-    id: '1',
-    team1: 'Galatasaray',
-    team2: 'Fenerbahce',
-    league: 'Süper Lig',
-    date: '2026-04-21',
-    time: '19:00',
-    sport: 'Футбол',
-    country: 'Турция',
-    popularity: 'top',
-    eventDate: new Date('2026-04-21'),
-    commDate: new Date('2026-04-18')
-  },
-  {
-    id: '2',
-    team1: 'Persepolis',
-    team2: 'Esteghlal',
-    league: 'Persian Gulf Pro League',
-    date: '2026-04-21',
-    time: '20:00',
-    sport: 'Футбол',
-    country: 'Иран',
-    popularity: 'top',
-    eventDate: new Date('2026-04-21'),
-    commDate: new Date('2026-04-18')
-  },
-  {
-    id: '3',
-    team1: 'Anadolu Efes',
-    team2: 'Fenerbahce',
-    league: 'BSL',
-    date: '2026-04-21',
-    time: '18:30',
-    sport: 'Баскетбол',
-    country: 'Турция',
-    popularity: 'top',
-    eventDate: new Date('2026-04-21'),
-    commDate: new Date('2026-04-18')
-  },
-  {
-    id: '4',
-    team1: 'Qarabag',
-    team2: 'Neftchi Baku',
-    league: 'Azerbaijan Premier League',
-    date: '2026-04-22',
-    time: '17:00',
-    sport: 'Футбол',
-    country: 'Азербайджан',
-    popularity: 'medium',
-    eventDate: new Date('2026-04-22'),
-    commDate: new Date('2026-04-19')
-  },
-  {
-    id: '5',
-    team1: 'Al-Seeb',
-    team2: 'Dhofar',
-    league: 'Oman Professional League',
-    date: '2026-04-22',
-    time: '19:30',
-    sport: 'Футбол',
-    country: 'Оман',
-    popularity: 'medium',
-    eventDate: new Date('2026-04-22'),
-    commDate: new Date('2026-04-19')
-  },
-  {
-    id: '6',
-    team1: 'Al-Ansar',
-    team2: 'Nejmeh',
-    league: 'Lebanese Premier League',
-    date: '2026-04-22',
-    time: '16:00',
-    sport: 'Футбол',
-    country: 'Ливан',
-    popularity: 'medium',
-    eventDate: new Date('2026-04-22'),
-    commDate: new Date('2026-04-19')
-  },
-  {
-    id: '7',
-    team1: 'Shabab Al-Khalil',
-    team2: 'Hilal Al-Quds',
-    league: 'West Bank Premier League',
-    date: '2026-04-22',
-    time: '15:00',
-    sport: 'Футбол',
-    country: 'Палестина',
-    popularity: 'low',
-    eventDate: new Date('2026-04-22'),
-    commDate: new Date('2026-04-19')
-  },
-  {
-    id: '8',
-    team1: 'Al-Ittihad Aleppo',
-    team2: 'Al-Wathba',
-    league: 'Syrian Premier League',
-    date: '2026-04-23',
-    time: '17:30',
-    sport: 'Футбол',
-    country: 'Сирия',
-    popularity: 'low',
-    eventDate: new Date('2026-04-23'),
-    commDate: new Date('2026-04-20')
-  },
-  {
-    id: '9',
-    team1: 'Besiktas',
-    team2: 'Trabzonspor',
-    league: 'Turkish Ice Hockey League',
-    date: '2026-04-21',
-    time: '20:30',
-    sport: 'Хоккей',
-    country: 'Турция',
-    popularity: 'medium',
-    eventDate: new Date('2026-04-21'),
-    commDate: new Date('2026-04-18')
-  },
-  {
-    id: '10',
-    team1: 'Khazar Lankaran',
-    team2: 'Goyazan Qazax',
-    league: 'Azerbaijan Ice Hockey Championship',
-    date: '2026-04-22',
-    time: '19:00',
-    sport: 'Хоккей',
-    country: 'Азербайджан',
-    popularity: 'low',
-    eventDate: new Date('2026-04-22'),
-    commDate: new Date('2026-04-19')
-  },
-  {
-    id: '11',
-    team1: 'Mahram Tehran',
-    team2: 'Petrochimi',
-    league: 'Iranian Basketball Super League',
-    date: '2026-04-23',
-    time: '18:00',
-    sport: 'Баскетбол',
-    country: 'Иран',
-    popularity: 'medium',
-    eventDate: new Date('2026-04-23'),
-    commDate: new Date('2026-04-20')
-  },
-  {
-    id: '12',
-    team1: 'Fenerbahce',
-    team2: 'Besiktas',
-    league: 'Süper Lig',
-    date: '2026-04-28',
-    time: '20:00',
-    sport: 'Футбол',
-    country: 'Турция',
-    popularity: 'top',
-    eventDate: new Date('2026-04-28'),
-    commDate: new Date('2026-04-25')
-  },
-  {
-    id: '13',
-    team1: 'Naft Tehran',
-    team2: 'Persepolis',
-    league: 'Persian Gulf Pro League',
-    date: '2026-05-01',
-    time: '19:30',
-    sport: 'Футбол',
-    country: 'Иран',
-    popularity: 'top',
-    eventDate: new Date('2026-05-01'),
-    commDate: new Date('2026-04-28')
-  }
-];
+const COUNTRY_LANGUAGE_MAP: Record<string, Language> = {
+  'Азербайджан': 'az',
+  'Иран': 'fa',
+  'Ливан': 'ar',
+  'Оман': 'ar',
+  'Палестина': 'ar',
+  'Сирия': 'ar',
+  'Турция': 'tr',
+  'Франция': 'fr',
+  'Россия': 'ru',
+};
 
+function hasSupportedLanguageCountry(country: string): boolean {
+  return Boolean(COUNTRY_LANGUAGE_MAP[country]);
+}
+
+const EVENTS_CACHE_PREFIX = 'sports-events-cache:';
+
+function buildEventsCacheKey(countryFilter: string, sportFilter: string): string {
+  return `${EVENTS_CACHE_PREFIX}${countryFilter}::${sportFilter}`;
+}
+
+const EVENTS_CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
+
+function serializeEventsForCache(events: SportsEvent[]): CachedSportsEvent[] {
+  return events.map((event) => ({
+    ...event,
+    eventDate: event.eventDate.toISOString(),
+    commDate: event.commDate.toISOString()
+  }));
+}
+
+function deserializeCachedEvents(raw: string | null): SportsEvent[] {
+  if (!raw) {
+    return [];
+  }
+
+  try {
+    const wrapper = JSON.parse(raw) as { ts?: number; events?: CachedSportsEvent[] };
+    if (!wrapper || !Array.isArray(wrapper.events)) {
+      return [];
+    }
+    if (wrapper.ts !== undefined && Date.now() - wrapper.ts > EVENTS_CACHE_TTL_MS) {
+      return [];
+    }
+    const parsed = wrapper.events;
+
+    return parsed
+      .map((event) => ({
+        ...event,
+        eventDate: new Date(event.eventDate),
+        commDate: new Date(event.commDate)
+      }))
+      .filter((event) => !Number.isNaN(event.eventDate.getTime()) && !Number.isNaN(event.commDate.getTime()));
+  } catch {
+    return [];
+  }
+}
+
+function readCachedEvents(countryFilter: string, sportFilter: string): SportsEvent[] {
+  try {
+    const key = buildEventsCacheKey(countryFilter, sportFilter);
+    return deserializeCachedEvents(window.localStorage.getItem(key));
+  } catch {
+    return [];
+  }
+}
+
+function writeCachedEvents(countryFilter: string, sportFilter: string, events: SportsEvent[]): void {
+  try {
+    const key = buildEventsCacheKey(countryFilter, sportFilter);
+    window.localStorage.setItem(key, JSON.stringify({ ts: Date.now(), events: serializeEventsForCache(events) }));
+  } catch {
+    // Ignore localStorage quota and access errors.
+  }
+}
 function generateMessage(sourceEvent: SportsEvent, template: Template, channel: 'push' | 'sms' | 'email' | 'personal' | 'call_script' | 'smm_post' | 'website_article', language: Language = 'ru') {
   const event = language === 'ru'
     ? sourceEvent
@@ -535,7 +444,7 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
 }
 
 export default function App() {
-  const [events, setEvents] = useState<SportsEvent[]>(MOCK_EVENTS);
+  const [events, setEvents] = useState<SportsEvent[]>([]);
   const [countriesCatalog, setCountriesCatalog] = useState<CountryOption[]>([]);
   const [countriesWithEvents, setCountriesWithEvents] = useState<string[]>([]);
   const [sportsWithEvents, setSportsWithEvents] = useState<string[]>([]);
@@ -551,6 +460,7 @@ export default function App() {
   const [eventDateFilter, setEventDateFilter] = useState<string>('');
   const [commDateFilter, setCommDateFilter] = useState<string>('');
   const [showFilters, setShowFilters] = useState(false);
+  const hasSelectedCountryOrSport = countryFilter !== 'all' || sportFilter !== 'all';
 
   useEffect(() => {
     let isCancelled = false;
@@ -583,9 +493,25 @@ export default function App() {
     let isCancelled = false;
 
     const loadEvents = async () => {
+      if (!hasSelectedCountryOrSport) {
+        if (!isCancelled) {
+          setEvents([]);
+          setEventsError(null);
+          setIsLoadingEvents(false);
+        }
+        return;
+      }
+
+      const cachedEvents = readCachedEvents(countryFilter, sportFilter);
+      const hasCachedEvents = cachedEvents.length > 0;
+
       try {
-        setIsLoadingEvents(true);
+        setIsLoadingEvents(!hasCachedEvents);
         setEventsError(null);
+
+        if (hasCachedEvents && !isCancelled) {
+          setEvents(cachedEvents);
+        }
 
         const selectedCountry = countriesCatalog.find((country) => country.name === countryFilter);
         const selectedSport = sportsCatalog.find((sport) => sport.name === sportFilter);
@@ -593,21 +519,30 @@ export default function App() {
           sportId: selectedSport?.id,
           tournamentCountryId: selectedCountry?.id,
           tournamentCountryName: selectedCountry?.name,
-          count: selectedSport || selectedCountry ? 200 : 100
+          count: selectedSport || selectedCountry ? 200 : 100,
+          includeEnglishNames: true
         });
         if (!isCancelled && apiEvents.length > 0) {
           setEvents(apiEvents);
+          writeCachedEvents(countryFilter, sportFilter, apiEvents);
           return;
         }
 
         if (!isCancelled && apiEvents.length === 0) {
-          setEventsError('API вернуло пустой список. Используются моковые данные.');
+          setEvents([]);
+          setEventsError('События по выбранным фильтрам не найдены.');
         }
       } catch (error) {
         if (!isCancelled) {
           const message = error instanceof Error ? error.message : 'Неизвестная ошибка';
-          setEventsError(`Не удалось загрузить данные из API: ${message}. Используются моковые данные.`);
-          toast.error('Ошибка загрузки API. Используются моковые события.');
+          if (hasCachedEvents) {
+            setEventsError('Показаны сохраненные данные. Не удалось обновить события из API.');
+            toast.error('Ошибка загрузки API. Показаны сохраненные данные.');
+          } else {
+            setEvents([]);
+            setEventsError(`Не удалось загрузить данные из API: ${message}.`);
+            toast.error('Ошибка загрузки API.');
+          }
         }
       } finally {
         if (!isCancelled) {
@@ -621,17 +556,23 @@ export default function App() {
     return () => {
       isCancelled = true;
     };
-  }, [countryFilter, sportFilter, countriesCatalog, sportsCatalog]);
+  }, [countryFilter, sportFilter, countriesCatalog, sportsCatalog, hasSelectedCountryOrSport]);
 
   useEffect(() => {
     let isCancelled = false;
 
     const loadCountriesWithEvents = async () => {
+      if (sportFilter === 'all') {
+        setCountriesWithEvents([]);
+        return;
+      }
+
       try {
         const selectedSport = sportsCatalog.find((sport) => sport.name === sportFilter);
         const apiEvents = await loadPrematchEvents('ru', {
           sportId: selectedSport?.id,
-          count: 5000
+          count: 5000,
+          includeEnglishNames: false
         });
 
         if (!isCancelled) {
@@ -667,7 +608,8 @@ export default function App() {
         const apiEvents = await loadPrematchEvents('ru', {
           tournamentCountryId: selectedCountry?.id,
           tournamentCountryName: selectedCountry?.name,
-          count: 200
+          count: 200,
+          includeEnglishNames: false
         });
         if (!isCancelled) {
           const nextSports = Array.from(new Set(apiEvents.map((e) => e.sport)))
@@ -701,18 +643,31 @@ export default function App() {
   }, [events, selectedEvent]);
 
   const availableCountries = useMemo(() => {
-    if (countriesWithEvents.length > 0) {
-      return countriesWithEvents;
+    let countries: string[];
+
+    if (sportFilter === 'all' && countriesCatalog.length > 0) {
+      countries = Array.from(new Set(countriesCatalog.map((country) => country.name)))
+        .filter((country) => hasSupportedLanguageCountry(country))
+        .sort((left, right) => left.localeCompare(right, 'ru'));
+    } else if (countriesWithEvents.length > 0) {
+      countries = [...countriesWithEvents].sort((a, b) => a.localeCompare(b, 'ru'));
+    } else {
+      countries = Array.from(new Set(events.map((event) => event.country)))
+        .sort((a, b) => a.localeCompare(b, 'ru'));
     }
 
-    return Array.from(new Set(events.map((event) => event.country))).sort((a, b) => a.localeCompare(b, 'ru'));
-  }, [countriesWithEvents, events]);
+    if (countryFilter !== 'all' && !countries.includes(countryFilter)) {
+      return [...countries, countryFilter].sort((a, b) => a.localeCompare(b, 'ru'));
+    }
+
+    return countries;
+  }, [sportFilter, countryFilter, countriesCatalog, countriesWithEvents, events]);
 
   useEffect(() => {
-    if (countryFilter !== 'all' && !availableCountries.includes(countryFilter)) {
+    if (countryFilter !== 'all' && sportFilter === 'all' && !availableCountries.includes(countryFilter)) {
       setCountryFilter('all');
     }
-  }, [availableCountries, countryFilter]);
+  }, [availableCountries, countryFilter, sportFilter]);
 
   const availableSports = useMemo(() => {
     if (sportsWithEvents.length > 0) {
@@ -945,7 +900,11 @@ ${event.date} • ${event.time}
             </div>
           )}
 
-          {!isLoadingEvents && filteredEvents.length === 0 && (
+          {!isLoadingEvents && !hasSelectedCountryOrSport && (
+            <div className="p-4 text-sm text-zinc-400">Выберите страну или вид спрота.</div>
+          )}
+
+          {!isLoadingEvents && hasSelectedCountryOrSport && filteredEvents.length === 0 && !eventsError && (
             <div className="p-4 text-sm text-zinc-400">События по выбранным фильтрам не найдены.</div>
           )}
 
