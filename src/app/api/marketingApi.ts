@@ -76,7 +76,7 @@ function delay(ms: number): Promise<void> {
   });
 }
 
-async function fetchWithRetry(input: string, init?: RequestInit, retries = 2): Promise<Response> {
+async function fetchWithRetry(input: string, init?: RequestInit, retries = 1): Promise<Response> {
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     try {
       const response = await fetch(input, init);
@@ -322,7 +322,7 @@ async function getAccessToken(clientId: string, clientSecret: string): Promise<s
   }
 }
 
-async function loadSportsDictionary(ref: string, token: string): Promise<Map<number, string>> {
+async function loadSportsDictionary(ref: string, token: string, language = 'ru'): Promise<Map<number, string>> {
   const now = Date.now();
   if (sportsDictionaryCache && sportsDictionaryCache.expiresAt > now) {
     return sportsDictionaryCache.value;
@@ -332,27 +332,39 @@ async function loadSportsDictionary(ref: string, token: string): Promise<Map<num
     return sportsDictionaryRequest;
   }
 
-  const url = new URL(SPORTS_DIRECTORY_ENDPOINT, window.location.origin);
-  url.searchParams.set('ref', ref);
-
   sportsDictionaryRequest = (async () => {
-    const response = await fetchWithRetry(url.toString(), {
-      headers: {
-        Authorization: `Bearer ${token}`
+    const requestSportsDictionary = async (lng?: string): Promise<Map<number, string>> => {
+      const url = new URL(SPORTS_DIRECTORY_ENDPOINT, window.location.origin);
+      url.searchParams.set('ref', ref);
+      if (lng) {
+        url.searchParams.set('lng', lng);
       }
-    });
 
-    if (!response.ok) {
-      return new Map<number, string>();
-    }
+      const response = await fetchWithRetry(url.toString(), {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
 
-    const payload = (await response.json()) as ListResponse<{ id?: number; name?: string | null }>;
-    const map = new Map<number, string>();
-
-    for (const item of payload.items || []) {
-      if (typeof item.id === 'number' && item.name) {
-        map.set(item.id, item.name);
+      if (!response.ok) {
+        return new Map<number, string>();
       }
+
+      const payload = (await response.json()) as ListResponse<{ id?: number; name?: string | null }>;
+      const map = new Map<number, string>();
+
+      for (const item of payload.items || []) {
+        if (typeof item.id === 'number' && item.name) {
+          map.set(item.id, item.name);
+        }
+      }
+
+      return map;
+    };
+
+    let map = await requestSportsDictionary(language);
+    if (map.size === 0 && language !== 'en') {
+      map = await requestSportsDictionary();
     }
 
     sportsDictionaryCache = {
@@ -478,6 +490,9 @@ async function loadApiSportsEvents(
   if (requestedCount > 50) {
     fallbackCounts.push(50);
   }
+  if (requestedCount > 20) {
+    fallbackCounts.push(20);
+  }
 
   const uniqueCounts = Array.from(new Set(fallbackCounts));
   let lastStatus: number | null = null;
@@ -561,7 +576,7 @@ function mapApiEventToUiEvent(
 }
 
 async function getApiConfig() {
-  const env = import.meta.env as Record<string, string | undefined>;
+  const env = ((import.meta as unknown as { env?: Record<string, string | undefined> }).env ?? {});
   const clientId = requireEnv('VITE_CLIENT_ID', env.VITE_CLIENT_ID || env.CLIENT_ID);
   const clientSecret = requireEnv('VITE_CLIENT_SECRET', env.VITE_CLIENT_SECRET || env.CLIENT_SECRET);
   const ref = requireEnv('VITE_REF', env.VITE_REF || env.REF);
@@ -603,7 +618,7 @@ export async function loadPrematchEvents(
     : Promise.resolve([] as ApiSportsEvent[]);
 
   const [sportNameById, countries, localizedItems, englishItems] = await Promise.all([
-    loadSportsDictionary(ref, accessToken),
+    loadSportsDictionary(ref, accessToken, language),
     loadCountryOptions(accessToken, language),
     loadApiSportsEvents(ref, accessToken, language, options),
     englishItemsPromise

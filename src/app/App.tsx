@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Copy, Check, Calendar, Filter } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Copy, Check, Calendar, Filter, Loader2 } from 'lucide-react';
 import { toast, Toaster } from 'sonner';
 import { loadAvailableCountries, loadAvailableSports, loadPrematchEvents, type CountryOption, type SportOption } from './api/marketingApi';
 
@@ -26,6 +26,13 @@ interface CachedSportsEvent extends Omit<SportsEvent, 'eventDate' | 'commDate'> 
 
 type Template = 'aggressive' | 'neutral' | 'vip' | 'churn';
 type Language = 'ru' | 'tr' | 'ar' | 'fa' | 'fr' | 'az';
+type MessageChannel = 'push' | 'sms' | 'email' | 'personal' | 'call_script' | 'smm_post' | 'website_article';
+type NonEmailMessageChannel = Exclude<MessageChannel, 'email'>;
+
+interface EmailMessage {
+  subject: string;
+  body: string;
+}
 
 const COUNTRY_LANGUAGE_MAP: Record<string, Language> = {
   'Азербайджан': 'az',
@@ -35,8 +42,6 @@ const COUNTRY_LANGUAGE_MAP: Record<string, Language> = {
   'Палестина': 'ar',
   'Сирия': 'ar',
   'Турция': 'tr',
-  'Франция': 'fr',
-  'Россия': 'ru',
 };
 
 function hasSupportedLanguageCountry(country: string): boolean {
@@ -103,7 +108,20 @@ function writeCachedEvents(countryFilter: string, sportFilter: string, events: S
     // Ignore localStorage quota and access errors.
   }
 }
-function generateMessage(sourceEvent: SportsEvent, template: Template, channel: 'push' | 'sms' | 'email' | 'personal' | 'call_script' | 'smm_post' | 'website_article', language: Language = 'ru') {
+
+function isGatewayTimeoutError(error: unknown): boolean {
+  return error instanceof Error && /status\s*504/i.test(error.message);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function generateMessage(sourceEvent: SportsEvent, template: Template, channel: 'email', language?: Language): EmailMessage;
+function generateMessage(sourceEvent: SportsEvent, template: Template, channel: NonEmailMessageChannel, language?: Language): string;
+function generateMessage(sourceEvent: SportsEvent, template: Template, channel: MessageChannel, language: Language = 'ru'): string | EmailMessage {
   const event = language === 'ru'
     ? sourceEvent
     : {
@@ -112,7 +130,7 @@ function generateMessage(sourceEvent: SportsEvent, template: Template, channel: 
         team2: sourceEvent.team2En || sourceEvent.team2,
       };
 
-  const translations = {
+  const translations: Record<Language, Record<Template, Record<MessageChannel, string | EmailMessage>>> = {
     ru: {
       aggressive: {
         push: `🔥 ${event.team1} vs ${event.team2} уже сегодня!\nУспей сделать ставку до начала — коэффициенты ждут`,
@@ -447,9 +465,10 @@ export default function App() {
   const [events, setEvents] = useState<SportsEvent[]>([]);
   const [countriesCatalog, setCountriesCatalog] = useState<CountryOption[]>([]);
   const [countriesWithEvents, setCountriesWithEvents] = useState<string[]>([]);
-  const [sportsWithEvents, setSportsWithEvents] = useState<string[]>([]);
+  const [allSportsWithEvents, setAllSportsWithEvents] = useState<string[]>([]);
   const [sportsCatalog, setSportsCatalog] = useState<SportOption[]>([]);
   const [isLoadingEvents, setIsLoadingEvents] = useState(true);
+  const [isLoadingCountriesOptions, setIsLoadingCountriesOptions] = useState(false);
   const [eventsError, setEventsError] = useState<string | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<SportsEvent | null>(null);
   const [selectedTemplate, setSelectedTemplate] = useState<Template>('aggressive');
@@ -460,29 +479,134 @@ export default function App() {
   const [eventDateFilter, setEventDateFilter] = useState<string>('');
   const [commDateFilter, setCommDateFilter] = useState<string>('');
   const [showFilters, setShowFilters] = useState(false);
+  const prefetchedCountriesRef = useRef(new Set<string>());
   const hasSelectedCountryOrSport = countryFilter !== 'all' || sportFilter !== 'all';
 
   useEffect(() => {
     let isCancelled = false;
 
     const loadDirectories = async () => {
-      try {
-        const [countries, sports] = await Promise.all([
-          loadAvailableCountries('ru'),
-          loadAvailableSports()
-        ]);
-        if (!isCancelled) {
-          setCountriesCatalog(countries);
-          setSportsCatalog(sports);
-        }
-      } catch (error) {
-        if (!isCancelled) {
-          console.error('Directories load error:', error);
-        }
+      const [countriesResult, sportsResult] = await Promise.allSettled([
+        loadAvailableCountries('ru'),
+        loadAvailableSports()
+      ]);
+
+      if (isCancelled) {
+        return;
+      }
+
+      if (countriesResult.status === 'fulfilled') {
+        setCountriesCatalog(countriesResult.value);
+      } else {
+        console.error('Countries directory load error:', countriesResult.reason);
+      }
+
+      if (sportsResult.status === 'fulfilled') {
+        setSportsCatalog(sportsResult.value);
+      } else {
+        console.error('Sports directory load error:', sportsResult.reason);
       }
     };
 
     loadDirectories();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    const preloadCountryEvents = async () => {
+      if (countriesCatalog.length === 0) {
+        return;
+      }
+
+      const countriesToPreload = countriesCatalog.filter((country) => hasSupportedLanguageCountry(country.name));
+
+      const queue = countriesToPreload.filter((country) => {
+        if (prefetchedCountriesRef.current.has(country.name)) {
+          return false;
+        }
+
+        const cachedEvents = readCachedEvents(country.name, 'all');
+        if (cachedEvents.length > 0) {
+          prefetchedCountriesRef.current.add(country.name);
+          return false;
+        }
+
+        return true;
+      });
+
+      if (queue.length === 0) {
+        return;
+      }
+
+      const chunkSize = 1;
+      for (let index = 0; index < queue.length; index += chunkSize) {
+        const chunk = queue.slice(index, index + chunkSize);
+        const results = await Promise.allSettled(
+          chunk.map(async (country) => {
+            const apiEvents = await loadPrematchEvents('ru', {
+              tournamentCountryId: country.id,
+              tournamentCountryName: country.name,
+              count: 50,
+              includeEnglishNames: false
+            });
+
+            return {
+              countryName: country.name,
+              events: apiEvents
+            };
+          })
+        );
+
+        if (isCancelled) {
+          return;
+        }
+
+        for (const result of results) {
+          if (result.status === 'fulfilled') {
+            writeCachedEvents(result.value.countryName, 'all', result.value.events);
+            prefetchedCountriesRef.current.add(result.value.countryName);
+          } else {
+            console.error('Country preload error:', result.reason);
+            if (isGatewayTimeoutError(result.reason)) {
+              return;
+            }
+          }
+        }
+
+        await delay(350);
+      }
+    };
+
+    preloadCountryEvents();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [countriesCatalog]);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    const loadInitialFilters = async () => {
+      try {
+        const apiEvents = await loadPrematchEvents('ru', { count: 500, includeEnglishNames: false });
+        if (!isCancelled) {
+          setAllSportsWithEvents(
+            Array.from(new Set(apiEvents.map((e) => e.sport)))
+              .sort((a, b) => a.localeCompare(b, 'ru'))
+          );
+        }
+      } catch {
+        // fallback to catalog-based lists if this request fails
+      }
+    };
+
+    loadInitialFilters();
 
     return () => {
       isCancelled = true;
@@ -519,8 +643,8 @@ export default function App() {
           sportId: selectedSport?.id,
           tournamentCountryId: selectedCountry?.id,
           tournamentCountryName: selectedCountry?.name,
-          count: selectedSport || selectedCountry ? 200 : 100,
-          includeEnglishNames: true
+          count: selectedSport || selectedCountry ? 100 : 80,
+          includeEnglishNames: false
         });
         if (!isCancelled && apiEvents.length > 0) {
           setEvents(apiEvents);
@@ -530,7 +654,15 @@ export default function App() {
 
         if (!isCancelled && apiEvents.length === 0) {
           setEvents([]);
-          setEventsError('События по выбранным фильтрам не найдены.');
+          setEventsError(
+            countryFilter !== 'all' && sportFilter !== 'all'
+              ? 'Для выбранной страны нет событий по выбранному виду спорта.'
+              : countryFilter !== 'all'
+                ? 'Для данной страны нет спортивных событий, выберите другую страну.'
+                : sportFilter !== 'all'
+                  ? 'Для выбранного вида спорта событий не найдено.'
+                  : 'События по выбранным фильтрам не найдены.'
+          );
         }
       } catch (error) {
         if (!isCancelled) {
@@ -563,15 +695,19 @@ export default function App() {
 
     const loadCountriesWithEvents = async () => {
       if (sportFilter === 'all') {
+        setIsLoadingCountriesOptions(false);
         setCountriesWithEvents([]);
         return;
       }
 
       try {
+        if (!isCancelled) {
+          setIsLoadingCountriesOptions(true);
+        }
         const selectedSport = sportsCatalog.find((sport) => sport.name === sportFilter);
         const apiEvents = await loadPrematchEvents('ru', {
           sportId: selectedSport?.id,
-          count: 5000,
+          count: 500,
           includeEnglishNames: false
         });
 
@@ -585,6 +721,10 @@ export default function App() {
           console.error('Countries with events load error:', error);
           setCountriesWithEvents([]);
         }
+      } finally {
+        if (!isCancelled) {
+          setIsLoadingCountriesOptions(false);
+        }
       }
     };
 
@@ -594,42 +734,6 @@ export default function App() {
       isCancelled = true;
     };
   }, [sportFilter, sportsCatalog]);
-
-  useEffect(() => {
-    let isCancelled = false;
-
-    const loadSportsWithEvents = async () => {
-      if (countryFilter === 'all') {
-        setSportsWithEvents([]);
-        return;
-      }
-      try {
-        const selectedCountry = countriesCatalog.find((c) => c.name === countryFilter);
-        const apiEvents = await loadPrematchEvents('ru', {
-          tournamentCountryId: selectedCountry?.id,
-          tournamentCountryName: selectedCountry?.name,
-          count: 200,
-          includeEnglishNames: false
-        });
-        if (!isCancelled) {
-          const nextSports = Array.from(new Set(apiEvents.map((e) => e.sport)))
-            .sort((a, b) => a.localeCompare(b, 'ru'));
-          setSportsWithEvents(nextSports);
-        }
-      } catch (error) {
-        if (!isCancelled) {
-          console.error('Sports with events load error:', error);
-          setSportsWithEvents([]);
-        }
-      }
-    };
-
-    loadSportsWithEvents();
-
-    return () => {
-      isCancelled = true;
-    };
-  }, [countryFilter, countriesCatalog]);
 
   useEffect(() => {
     if (!selectedEvent) {
@@ -670,14 +774,17 @@ export default function App() {
   }, [availableCountries, countryFilter, sportFilter]);
 
   const availableSports = useMemo(() => {
-    if (sportsWithEvents.length > 0) {
-      return sportsWithEvents;
+    if (allSportsWithEvents.length > 0) {
+      // show global API-backed sports list regardless of selected country
+      return allSportsWithEvents;
     }
+
     if (sportsCatalog.length > 0) {
       return sportsCatalog.map((sport) => sport.name);
     }
-    return Array.from(new Set(events.map((event) => event.sport))).sort((a, b) => a.localeCompare(b, 'ru'));
-  }, [sportsWithEvents, events, sportsCatalog]);
+
+    return Array.from(new Set(events.map((e) => e.sport))).sort((a, b) => a.localeCompare(b, 'ru'));
+  }, [allSportsWithEvents, events, sportsCatalog]);
 
   useEffect(() => {
     if (sportFilter !== 'all' && availableSports.length > 0 && !availableSports.includes(sportFilter)) {
@@ -811,11 +918,20 @@ ${event.date} • ${event.time}
 
           <div className={`p-4 pt-0 space-y-3 ${showFilters ? 'block' : 'hidden'} md:block`}>
             <div>
-              <label className="text-sm text-zinc-400 mb-1 block">Страна</label>
+              <label className="text-sm text-zinc-400 mb-1 flex items-center justify-between gap-2">
+                <span>Страна</span>
+                {isLoadingCountriesOptions && (
+                  <span className="inline-flex items-center gap-1 text-xs text-zinc-500">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    Обновляем
+                  </span>
+                )}
+              </label>
               <select
                 value={countryFilter}
                 onChange={(e) => setCountryFilter(e.target.value)}
-                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                disabled={isLoadingCountriesOptions}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 disabled:opacity-70 disabled:cursor-wait"
               >
                 <option value="all">Все страны</option>
                 {availableCountries.map((country) => (
@@ -825,7 +941,7 @@ ${event.date} • ${event.time}
             </div>
 
             <div>
-              <label className="text-sm text-zinc-400 mb-1 block">Спорт</label>
+              <label className="text-sm text-zinc-400 mb-1">Спорт</label>
               <select
                 value={sportFilter}
                 onChange={(e) => setSportFilter(e.target.value)}
@@ -891,7 +1007,10 @@ ${event.date} • ${event.time}
         {/* Events */}
         <div className="flex-1 overflow-y-auto">
           {isLoadingEvents && (
-            <div className="p-4 text-sm text-zinc-400">Загрузка событий из API...</div>
+            <div className="p-4 text-sm text-zinc-400 flex items-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>Загрузка событий из API...</span>
+            </div>
           )}
 
           {eventsError && (

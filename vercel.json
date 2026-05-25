@@ -1,0 +1,14 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "rewrites": [
+    {
+      "source": "/api/token",
+      "destination": "https://cpservm.com/gateway/token"
+    },
+    {
+      "source": "/api/marketing/:path*",
+      "destination": "https://cpservm.com/gateway/marketing/:path*"
+    }
+  ]
+}
