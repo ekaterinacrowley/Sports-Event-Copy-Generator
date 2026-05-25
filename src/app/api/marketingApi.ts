@@ -502,6 +502,8 @@ async function loadApiSportsEvents(
     url.searchParams.set('ref', ref);
     url.searchParams.set('lng', language);
     url.searchParams.set('count', String(count));
+    // Include additional main events (e.g., basketball can expose main line under vid=12).
+    url.searchParams.set('vids', '1,12');
     if (options?.sportId) {
       url.searchParams.set('sportIds', String(options.sportId));
     }
