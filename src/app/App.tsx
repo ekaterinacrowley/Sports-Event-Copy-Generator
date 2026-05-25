@@ -48,7 +48,7 @@ function hasSupportedLanguageCountry(country: string): boolean {
   return Boolean(COUNTRY_LANGUAGE_MAP[country]);
 }
 
-const EVENTS_CACHE_PREFIX = 'sports-events-cache:';
+const EVENTS_CACHE_PREFIX = 'sports-events-cache:v2:';
 
 function buildEventsCacheKey(countryFilter: string, sportFilter: string): string {
   return `${EVENTS_CACHE_PREFIX}${countryFilter}::${sportFilter}`;
@@ -554,7 +554,7 @@ export default function App() {
               tournamentCountryId: country.id,
               tournamentCountryName: country.name,
               count: 50,
-              includeEnglishNames: false
+              includeEnglishNames: true
             });
 
             return {
@@ -654,7 +654,7 @@ export default function App() {
           tournamentCountryId: selectedCountry?.id,
           tournamentCountryName: selectedCountry?.name,
           count: selectedSport || selectedCountry ? 100 : 80,
-          includeEnglishNames: false
+          includeEnglishNames: true
         });
 
         if (!isCancelled && apiEvents.length > 0) {
@@ -667,7 +667,7 @@ export default function App() {
           const fallbackEvents = await loadPrematchEvents('ru', {
             sportId: selectedSport?.id,
             count: selectedSport ? 100 : 80,
-            includeEnglishNames: false
+            includeEnglishNames: true
           });
 
           if (fallbackEvents.length > 0) {
