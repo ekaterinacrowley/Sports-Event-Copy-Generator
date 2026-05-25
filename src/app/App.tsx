@@ -675,8 +675,8 @@ export default function App() {
             setCountryFallbackActive(true);
             setCountryFallbackMessage(
               selectedSport
-                ? `Фильтр страны для ${selectedCountry.name} не вернул данных. Показаны события по спорту без учета страны.`
-                : `Фильтр страны для ${selectedCountry.name} не вернул данных. Показаны события без учета страны.`
+                ? `По стране ${selectedCountry.name} событий не найдено. Показаны события выбранного вида спорта без фильтра по стране.`
+                : `По стране ${selectedCountry.name} событий не найдено. Показаны события без фильтра по стране.`
             );
             return;
           }
@@ -688,12 +688,12 @@ export default function App() {
           setCountryFallbackMessage(null);
           setEventsError(
             countryFilter !== 'all' && sportFilter !== 'all'
-              ? 'Для выбранной страны нет событий по выбранному виду спорта.'
+              ? 'По выбранным стране и виду спорта событий нет.'
               : countryFilter !== 'all'
-                ? 'Для данной страны нет спортивных событий, выберите другую страну.'
+                ? 'По выбранной стране событий нет. Выберите другую страну.'
                 : sportFilter !== 'all'
-                  ? 'Для выбранного вида спорта событий не найдено.'
-                  : 'События по выбранным фильтрам не найдены.'
+                  ? 'По выбранному виду спорта событий нет.'
+                  : 'По выбранным фильтрам событий нет.'
           );
         }
       } catch (error) {
@@ -1046,7 +1046,7 @@ ${event.date} • ${event.time}
           {isLoadingEvents && (
             <div className="p-4 text-sm text-zinc-400 flex items-center gap-2">
               <Loader2 className="w-4 h-4 animate-spin" />
-              <span>Загрузка событий из API...</span>
+              <span>Загружаем события...</span>
             </div>
           )}
 
@@ -1063,11 +1063,11 @@ ${event.date} • ${event.time}
           )}
 
           {!isLoadingEvents && !hasSelectedCountryOrSport && (
-            <div className="p-4 text-sm text-zinc-400">Выберите страну или вид спрота.</div>
+            <div className="p-4 text-sm text-zinc-400">Выберите страну или вид спорта.</div>
           )}
 
           {!isLoadingEvents && hasSelectedCountryOrSport && filteredEvents.length === 0 && !eventsError && (
-            <div className="p-4 text-sm text-zinc-400">События по выбранным фильтрам не найдены.</div>
+            <div className="p-4 text-sm text-zinc-400">По выбранным фильтрам событий нет.</div>
           )}
 
           {filteredEvents.map((event) => (
